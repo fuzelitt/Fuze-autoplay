@@ -15,13 +15,17 @@ class Chart:
 
     @classmethod
     def from_dict(cls, d: dict):
-        version = d['formatVersion']
+        # Some chart files omit formatVersion / offset / numOfNotes; they are not needed for planning.
+        version = d.get('formatVersion', 3)
+        offset = d.get('offset', 0.0)
         if version == 1:
-            return cls(version, d['offset'], d['numOfNotes'],
-                       [*map(JudgeLine.from_dict_v1, d['judgeLineList'])])
+            lines = [*map(JudgeLine.from_dict_v1, d['judgeLineList'])]
         else:
-            return cls(version, d['offset'], d['numOfNotes'],
-                       [*map(JudgeLine.from_dict, d['judgeLineList'])])
+            lines = [*map(JudgeLine.from_dict, d['judgeLineList'])]
+        count = d.get('numOfNotes')
+        if count is None:
+            count = sum(len(l.notes_above) + len(l.notes_below) for l in lines)
+        return cls(version, offset, count, lines)
 
 
 __all__ = ['Chart']
