@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Phigros Autoplay</string>
+    <string name="service_label">Phigros Autoplay (tap injector)</string>
+    <string name="service_desc">Lets Phigros Autoplay perform the planned taps and swipes on screen. It does not read screen content.</string>
+</resources>
