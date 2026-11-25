@@ -19,7 +19,8 @@ import json
 from typing import Dict, List, Tuple
 
 MAX_STROKES = 10          # GestureDescription.getMaxStrokeCount()
-MIN_TOUCH_MS = 12         # a tap shorter than this is stretched to this
+MIN_TOUCH_MS = 90         # taps/drags shorter than this are held for this long
+HOLD_TAIL_MS = 60         # longer touches (holds, flicks) are released this much later
 PREFERRED_GAP_MS = 60     # try to cut windows where nothing happens for this long
 PATH_STEP_MS = 5          # path points closer than this are dropped
 
@@ -85,9 +86,11 @@ def build_touches(events) -> List[List[Point]]:
     done.extend(active.values())
 
     for pts in done:
-        if pts[-1][0] - pts[0][0] < MIN_TOUCH_MS:
-            t, x, y = pts[-1]
-            pts.append((pts[0][0] + MIN_TOUCH_MS, x, y))
+        t, x, y = pts[-1]
+        if t - pts[0][0] < MIN_TOUCH_MS:
+            pts.append((pts[0][0] + MIN_TOUCH_MS, x, y))   # short touch: hold it longer
+        else:
+            pts.append((t + HOLD_TAIL_MS, x, y))           # long touch: release a bit later
     done.sort(key=lambda p: (p[0][0], p[0][1], p[0][2]))
     return done
 
