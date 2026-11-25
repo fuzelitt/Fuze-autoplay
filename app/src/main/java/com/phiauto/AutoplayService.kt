@@ -294,7 +294,7 @@ class AutoplayService : AccessibilityService() {
                         MotionEvent.ACTION_MOVE -> {
                             params.x = sx + (e.rawX - tx).toInt()
                             params.y = sy + (e.rawY - ty).toInt()
-                            overlay?.let { wm.updateViewLayout(it, params) }
+                            this@AutoplayService.overlay?.let { wm.updateViewLayout(it, params) }
                         }
                     }
                     return true
