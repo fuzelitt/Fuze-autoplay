@@ -98,6 +98,14 @@ class MainActivity : Activity() {
             textSize = 12f
         })
 
+        status = TextView(this).apply {
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            setBackgroundColor(0xFFEFEFEF.toInt())
+            textSize = 13f
+            text = "Ready."
+        }
+        col.addView(status)
+
         col.addView(label("1. Charts"))
         col.addView(Button(this).apply {
             text = "Extract charts from installed Phigros"
@@ -181,21 +189,19 @@ class MainActivity : Activity() {
             setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         })
 
-        status = TextView(this).apply {
-            setPadding(0, dp(16), 0, 0)
-            textSize = 13f
-        }
-        col.addView(status)
         updateServiceHint()
     }
 
     private fun say(msg: String) {
-        ui.post { status.text = msg }
+        ui.post {
+            status.text = msg
+            android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun updateServiceHint() {
         if (!::status.isInitialized) return
-        if (AutoplayService.instance == null && status.text.isNullOrEmpty()) {
+        if (AutoplayService.instance == null && status.text.toString() == "Ready.") {
             status.text = "The tap-injector service is OFF. Turn on \"Phigros Autoplay (tap injector)\" in " +
                 "Accessibility settings. (Android 13+: if it is greyed out, open this app's App info, " +
                 "tap ⋮ and choose \"Allow restricted settings\" first.)"
@@ -245,15 +251,38 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------- extraction ---
 
+    private fun findGamePackage(): String? {
+        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val apps = packageManager.queryIntentActivities(launcher, 0)
+        for (r in apps) {
+            val pkg = r.activityInfo.packageName
+            val label = r.loadLabel(packageManager).toString()
+            if (pkg.contains("phigros", true) || label.contains("phigros", true)) return pkg
+        }
+        return try {
+            packageManager.getApplicationInfo(GAME_PACKAGE, 0)
+            GAME_PACKAGE
+        } catch (e: PackageManager.NameNotFoundException) {
+            null
+        }
+    }
+
     private fun extractInstalled() {
+        say("Looking for the installed game…")
+        val pkg = findGamePackage()
+        if (pkg == null) {
+            say("Could not find Phigros among installed apps. Use \"Choose a Phigros .apk file…\" instead.")
+            return
+        }
         try {
-            val ai = packageManager.getApplicationInfo(GAME_PACKAGE, 0)
+            val ai = packageManager.getApplicationInfo(pkg, 0)
             val paths = ArrayList<String>()
             paths.add(ai.sourceDir)
             ai.splitSourceDirs?.let { paths.addAll(it) }
+            say("Found $pkg (${paths.size} APK file(s)). Extracting…")
             runExtract(paths, null)
-        } catch (e: PackageManager.NameNotFoundException) {
-            say("Phigros ($GAME_PACKAGE) is not installed. Use \"Choose a Phigros .apk file…\" instead.")
+        } catch (e: Exception) {
+            say("Could not read the game's APK: ${e.message}")
         }
     }
 
@@ -292,7 +321,7 @@ class MainActivity : Activity() {
                     else "Extracted $n chart files."
                 )
                 refreshSongs()
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 say("Extraction failed: ${e.message}")
             } finally {
                 cleanup?.delete()
