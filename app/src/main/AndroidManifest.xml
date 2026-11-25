@@ -4,6 +4,10 @@
     <!-- lets the app see the installed game's APK path (Android 11+ package visibility) -->
     <queries>
         <package android:name="com.PigeonGames.Phigros" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <application
