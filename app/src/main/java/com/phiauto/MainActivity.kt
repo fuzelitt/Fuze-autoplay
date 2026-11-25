@@ -32,11 +32,6 @@ import java.io.File
 import kotlin.math.max
 import kotlin.math.min
 
-/** Called from Python while extracting charts. */
-interface ProgressCb {
-    fun onProgress(done: Int, total: Int)
-}
-
 class MainActivity : Activity() {
 
     private val ui = Handler(Looper.getMainLooper())
@@ -56,8 +51,7 @@ class MainActivity : Activity() {
     private var allSongs: Map<String, List<String>> = emptyMap()
     private var shownSongs: List<String> = emptyList()
 
-    private val REQ_APK = 1001
-    private val GAME_PACKAGE = "com.PigeonGames.Phigros"
+    private val REQ_ZIP = 1001
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -108,17 +102,18 @@ class MainActivity : Activity() {
 
         col.addView(label("1. Charts"))
         col.addView(Button(this).apply {
-            text = "Extract charts from installed Phigros"
-            setOnClickListener { extractInstalled() }
-        })
-        col.addView(Button(this).apply {
-            text = "Choose a Phigros .apk file…"
+            text = "Import charts from a .zip…"
             setOnClickListener {
                 startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
                     type = "*/*"
-                }, REQ_APK)
+                }, REQ_ZIP)
             }
+        })
+        col.addView(TextView(this).apply {
+            text = "A zip containing Assets/Tracks/<song>/Chart_<difficulty>.json files " +
+                "(e.g. the repo's \"Download ZIP\"). Only those chart files are imported."
+            textSize = 12f
         })
 
         col.addView(label("2. Pick a chart"))
@@ -224,7 +219,7 @@ class MainActivity : Activity() {
                 ui.post {
                     allSongs = map
                     applyFilter()
-                    if (map.isEmpty()) status.text = "No charts yet. Use step 1 first."
+                    if (map.isEmpty()) status.text = "No charts yet. Import a zip in step 1."
                 }
             } catch (e: Exception) {
                 say("Could not list songs: ${e.message}")
@@ -251,80 +246,43 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------- extraction ---
 
-    private fun findGamePackage(): String? {
-        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val apps = packageManager.queryIntentActivities(launcher, 0)
-        for (r in apps) {
-            val pkg = r.activityInfo.packageName
-            val label = r.loadLabel(packageManager).toString()
-            if (pkg.contains("phigros", true) || label.contains("phigros", true)) return pkg
-        }
-        return try {
-            packageManager.getApplicationInfo(GAME_PACKAGE, 0)
-            GAME_PACKAGE
-        } catch (e: PackageManager.NameNotFoundException) {
-            null
-        }
-    }
-
-    private fun extractInstalled() {
-        say("Looking for the installed game…")
-        val pkg = findGamePackage()
-        if (pkg == null) {
-            say("Could not find Phigros among installed apps. Use \"Choose a Phigros .apk file…\" instead.")
-            return
-        }
-        try {
-            val ai = packageManager.getApplicationInfo(pkg, 0)
-            val paths = ArrayList<String>()
-            paths.add(ai.sourceDir)
-            ai.splitSourceDirs?.let { paths.addAll(it) }
-            say("Found $pkg (${paths.size} APK file(s)). Extracting…")
-            runExtract(paths, null)
-        } catch (e: Exception) {
-            say("Could not read the game's APK: ${e.message}")
-        }
-    }
+    private val chartPath = Regex("""(?:^|/)Tracks/([^/]+)/(Chart_[^/]+\.json)$""")
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != REQ_APK || resultCode != RESULT_OK) return
+        if (requestCode != REQ_ZIP || resultCode != RESULT_OK) return
         val uri: Uri = data?.data ?: return
-        say("Copying the APK to app storage…")
-        Thread {
-            try {
-                val tmp = File(cacheDir, "picked.apk")
-                contentResolver.openInputStream(uri)!!.use { input ->
-                    tmp.outputStream().use { out -> input.copyTo(out, 1 shl 16) }
-                }
-                runExtract(listOf(tmp.absolutePath), tmp)
-            } catch (e: Exception) {
-                say("Could not read that file: ${e.message}")
-            }
-        }.start()
-    }
-
-    private fun runExtract(paths: List<String>, cleanup: File?) {
-        say("Extracting charts… this can take a few minutes the first time.")
+        say("Importing charts…")
         ui.post { prepareBtn.isEnabled = false }
         Thread {
             try {
-                val cb = object : ProgressCb {
-                    override fun onProgress(done: Int, total: Int) = say("Extracting charts… $done / $total")
+                var n = 0
+                val songs = HashSet<String>()
+                val input = contentResolver.openInputStream(uri) ?: throw IllegalStateException("cannot open file")
+                java.util.zip.ZipInputStream(input.buffered()).use { zip ->
+                    while (true) {
+                        val e = zip.nextEntry ?: break
+                        if (e.isDirectory) continue
+                        val m = chartPath.find(e.name.replace('\\', '/')) ?: continue
+                        val song = m.groupValues[1]
+                        val name = m.groupValues[2]
+                        if (song == "." || song == "..") continue
+                        val dir = File(root, "Assets/Tracks/$song")
+                        dir.mkdirs()
+                        File(dir, name).outputStream().use { out -> zip.copyTo(out, 1 shl 16) }
+                        songs.add(song)
+                        n++
+                        if (n % 50 == 0) say("Importing charts… $n files")
+                    }
                 }
-                val n = Python.getInstance().getModule("phi_bridge")
-                    .callAttr("extract_charts", paths.joinToString("\n"), root.absolutePath, cb)
-                    .toInt()
                 say(
-                    if (n == 0) "No charts found in that APK. Make sure it is the full game APK " +
-                        "(for split installs, the base + asset split)."
-                    else "Extracted $n chart files."
+                    if (n == 0) "No Assets/Tracks/<song>/Chart_*.json files found in that zip."
+                    else "Imported $n chart files for ${songs.size} songs."
                 )
                 refreshSongs()
             } catch (e: Throwable) {
-                say("Extraction failed: ${e.message}")
+                say("Import failed: ${e.message}")
             } finally {
-                cleanup?.delete()
                 ui.post { prepareBtn.isEnabled = true }
             }
         }.start()
@@ -351,7 +309,7 @@ class MainActivity : Activity() {
         val song = songSpinner.selectedItem as? String
         val diff = diffSpinner.selectedItem as? String
         if (song == null || diff == null) {
-            say("Pick a song and difficulty first (step 1 extracts them).")
+            say("Pick a song and difficulty first (import a charts zip in step 1).")
             return
         }
         val algo = algoSpinner.selectedItem as String
