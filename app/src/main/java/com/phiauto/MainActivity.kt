@@ -52,6 +52,7 @@ class MainActivity : Activity() {
     private var shownSongs: List<String> = emptyList()
 
     private val REQ_ZIP = 1001
+    private val REQ_JSON = 1002
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -108,6 +109,16 @@ class MainActivity : Activity() {
                     addCategory(Intent.CATEGORY_OPENABLE)
                     type = "*/*"
                 }, REQ_ZIP)
+            }
+        })
+        col.addView(Button(this).apply {
+            text = "Open a chart .json file…"
+            setOnClickListener {
+                startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "*/*"
+                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                }, REQ_JSON)
             }
         })
         col.addView(TextView(this).apply {
@@ -205,7 +216,7 @@ class MainActivity : Activity() {
 
     // --------------------------------------------------------------- songs ---
 
-    private fun refreshSongs() {
+    private fun refreshSongs(select: String? = null) {
         Thread {
             try {
                 val json = Python.getInstance().getModule("phi_bridge")
@@ -219,6 +230,7 @@ class MainActivity : Activity() {
                 ui.post {
                     allSongs = map
                     applyFilter()
+                    if (select != null) search.setText(select)   // narrows the list to it
                     if (map.isEmpty()) status.text = "No charts yet. Import a zip in step 1."
                 }
             } catch (e: Exception) {
@@ -246,10 +258,53 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------- extraction ---
 
+    /** Use chart JSON files directly: each becomes its own entry under Assets/Tracks/<file name>/. */
+    private fun importJson(uris: List<Uri>) {
+        say("Reading chart file(s)…")
+        Thread {
+            try {
+                var last: String? = null
+                var ok = 0
+                val bad = ArrayList<String>()
+                for (uri in uris) {
+                    var display = "chart"
+                    contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                        ?.use { c -> if (c.moveToFirst()) display = c.getString(0) ?: "chart" }
+                    val text = contentResolver.openInputStream(uri)!!.use { it.readBytes().toString(Charsets.UTF_8) }
+                    if (!text.contains("judgeLineList")) {
+                        bad.add(display)
+                        continue
+                    }
+                    var song = display.removeSuffix(".json").replace(Regex("[^A-Za-z0-9._ -]"), "_").trim()
+                    if (song.isEmpty() || song == "." || song == "..") song = "chart"
+                    val dir = File(root, "Assets/Tracks/$song")
+                    dir.mkdirs()
+                    File(dir, "Chart_File.json").writeText(text, Charsets.UTF_8)
+                    last = song
+                    ok++
+                }
+                say(
+                    (if (ok > 0) "Loaded $ok chart file(s). Selected: $last\n" else "") +
+                        (if (bad.isNotEmpty()) "Not a Phigros chart (no judgeLineList): ${bad.joinToString()}" else "")
+                )
+                refreshSongs(last)
+            } catch (e: Throwable) {
+                say("Could not read the file: ${e.message}")
+            }
+        }.start()
+    }
+
     private val chartPath = Regex("""(?:^|/)Tracks/([^/]+)/(Chart_[^/]+\.json)$""")
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_JSON && resultCode == RESULT_OK) {
+            val uris = ArrayList<Uri>()
+            data?.data?.let { uris.add(it) }
+            data?.clipData?.let { cd -> for (i in 0 until cd.itemCount) uris.add(cd.getItemAt(i).uri) }
+            importJson(uris)
+            return
+        }
         if (requestCode != REQ_ZIP || resultCode != RESULT_OK) return
         val uri: Uri = data?.data ?: return
         say("Importing charts…")
